@@ -1,37 +1,46 @@
 /**
- * Firebase設定 - V2統合版（個人設定画面完全対応・認証競合解消）
+ * Firebase設定 - V3統合版（新プロジェクト対応・モジュラーSDK）
  * 
  * 役割:
  * - Firebase基本設定の提供とApp初期化
  * - グローバルインスタンスの管理
  * - 初期化完了Promise管理
+ * - Firebase v9+ モジュラーSDK完全対応
  * 
  * 重要: 認証処理は各ページで明示的に実行（競合防止）
  */
 
-if (typeof window.firebaseV2Initialized === 'undefined') {
-    console.log('🔄 Firebase設定ファイル読み込み開始');
+// Firebase v9+ モジュラーSDK インポート（CDN使用）
+import { initializeApp, getApps, getApp } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js';
+import { getAuth } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js';
+import { getDatabase, ref, onValue } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
+import { getAnalytics, isSupported as isAnalyticsSupported } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-analytics.js';
+
+if (typeof window.firebaseV3Initialized === 'undefined') {
+    console.log('🔄 Firebase V3設定ファイル読み込み開始');
     
-    // Firebase設定（既存設定を維持）
+    // Firebase設定（新プロジェクト: work-arrangement）
     window.firebaseConfig = {
-        apiKey: "AIzaSyCRUvvs0OSz_9L9bXtqteVFIIze1OaZObE",
-        authDomain: "ce-scheduling-system-v2.firebaseapp.com",
-        databaseURL: "https://ce-scheduling-system-v2-default-rtdb.asia-southeast1.firebasedatabase.app",
-        projectId: "ce-scheduling-system-v2",
-        storageBucket: "ce-scheduling-system-v2.firebasestorage.app",
-        messagingSenderId: "288279598010",
-        appId: "1:288279598010:web:d545ee1d4d854513084383",
-        measurementId: "G-LSEEMJE2R0"
+        apiKey: "AIzaSyDHujcHnKS1IKxcp1rBmfL6zNiraRVv_Q0",
+        authDomain: "work-arrangement.firebaseapp.com",
+        databaseURL: "https://work-arrangement-default-rtdb.firebaseio.com",
+        projectId: "work-arrangement",
+        storageBucket: "work-arrangement.firebasestorage.app",
+        messagingSenderId: "373524055304",
+        appId: "1:373524055304:web:aaa68f970ef640384c58bd",
+        measurementId: "G-XQ9ZS2FNC1"
     };
 
-    // データルート
-    window.DATA_ROOT = 'ceScheduleV2';
+    // データルート（既存システムとの互換性を考慮）
+    window.DATA_ROOT = window.DATA_ROOT || 'workArrangementV3';
 
     // グローバル変数
+    window.app = null;
     window.auth = null;
     window.database = null;
+    window.analytics = null;
     window.isFirebaseReady = false;
-    window.firebaseV2Initialized = false;
+    window.firebaseV3Initialized = false;
 
     // Promise管理（初期化完了待機用）
     let initResolve, initReject, isResolved = false;
@@ -44,10 +53,10 @@ if (typeof window.firebaseV2Initialized === 'undefined') {
 
     /**
      * Firebase基本初期化（認証なし）
-     * 認証処理は意図的に除外し、各ページで明示的に実行
+     * モジュラーSDK使用・認証処理は各ページで明示的実行
      */
-    function initializeFirebaseV2() {
-        if (window.firebaseV2Initialized) {
+    async function initializeFirebaseV3() {
+        if (window.firebaseV3Initialized) {
             if (!isResolved && initResolve) {
                 isResolved = true;
                 initResolve();
@@ -56,39 +65,58 @@ if (typeof window.firebaseV2Initialized === 'undefined') {
         }
         
         try {
-            // Firebase SDK待機
-            if (typeof firebase === 'undefined') {
-                console.log('⏳ Firebase SDK待機中...');
-                setTimeout(initializeFirebaseV2, 200);
-                return;
-            }
-
-            // Firebase App初期化
+            // Firebase App初期化（冪等性保証）
             let app;
-            if (firebase.apps && firebase.apps.length > 0) {
-                app = firebase.app();
-                console.log('✅ 既存Firebase App使用');
+            if (getApps().length > 0) {
+                app = getApp();
+                console.log('✅ 既存Firebase App使用（V3）');
             } else {
-                app = firebase.initializeApp(window.firebaseConfig);
-                console.log('✅ Firebase App初期化完了');
+                app = initializeApp(window.firebaseConfig);
+                console.log('✅ Firebase App初期化完了（V3）');
             }
             
             // サービスインスタンス作成
-            window.auth = firebase.auth();
-            window.database = firebase.database();
-            window.firebaseV2Initialized = true;
+            window.app = app;
+            window.auth = getAuth(app);
+            window.database = getDatabase(app);
             
-            // 接続状態監視（エラーハンドリング付き）
+            // Analytics初期化（ブラウザ対応チェック付き）
             try {
-                window.database.ref('.info/connected').on('value', function(snapshot) {
-                    window.isFirebaseReady = snapshot.val();
-                    console.log(snapshot.val() ? '✅ Firebase接続成功' : '❌ Firebase接続失敗');
-                }, function(error) {
-                    console.warn('⚠️ Firebase接続監視エラー:', error.message);
-                });
-            } catch (connectionError) {
-                console.warn('⚠️ 接続監視設定失敗:', connectionError.message);
+                const analyticsSupported = await isAnalyticsSupported();
+                if (analyticsSupported && window.firebaseConfig.measurementId) {
+                    window.analytics = getAnalytics(app);
+                    console.log('📊 Firebase Analytics初期化完了（V3）');
+                } else {
+                    console.log('📊 Analytics非対応環境またはmeasurementId未設定のためスキップ');
+                    window.analytics = null;
+                }
+            } catch (analyticsError) {
+                console.warn('⚠️ Analytics初期化失敗:', analyticsError?.message || analyticsError);
+                window.analytics = null;
             }
+            
+            // 接続状態監視（Realtime Database）
+            try {
+                const connectedRef = ref(window.database, '.info/connected');
+                onValue(
+                    connectedRef,
+                    (snapshot) => {
+                        window.isFirebaseReady = !!snapshot.val();
+                        console.log(window.isFirebaseReady ? 
+                            '✅ Firebase接続成功（V3）' : 
+                            '❌ Firebase接続失敗（V3）'
+                        );
+                    },
+                    (error) => {
+                        console.warn('⚠️ Firebase接続監視エラー（V3）:', error?.message || error);
+                        window.isFirebaseReady = false;
+                    }
+                );
+            } catch (connectionError) {
+                console.warn('⚠️ 接続監視設定失敗（V3）:', connectionError?.message || connectionError);
+            }
+
+            window.firebaseV3Initialized = true;
 
             // Promise解決
             if (!isResolved && initResolve) {
@@ -97,7 +125,7 @@ if (typeof window.firebaseV2Initialized === 'undefined') {
             }
             
         } catch (error) {
-            console.error('❌ Firebase初期化エラー:', error);
+            console.error('❌ Firebase初期化エラー（V3）:', error);
             if (!isResolved && initReject) {
                 isResolved = true;
                 initReject(error);
@@ -106,6 +134,6 @@ if (typeof window.firebaseV2Initialized === 'undefined') {
     }
 
     // 即座に初期化実行
-    initializeFirebaseV2();
-    console.log('🔒 Firebase設定ファイル読み込み完了');
+    initializeFirebaseV3();
+    console.log('🔒 Firebase V3設定ファイル読み込み完了');
 }
